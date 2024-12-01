@@ -80,7 +80,7 @@ if uploaded_video is not None:
 
     # Mostrar la imagen generada
     if output_image is not None:
-        status_placeholder.info("Proceso finalizado!")
+        status_placeholder.success("Proceso finalizado!")
         st.image(output_image, caption="Imagen generada a partir del video.", use_container_width=True)
         
 
