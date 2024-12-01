@@ -60,7 +60,7 @@ def recuperar_datos(video_path):
     return output_image
 
 # Configuración de la interfaz
-st.title("Prototipo funcional de la técnica de rebanodo de video")
+st.title("Prototipo funcional de la técnica de rebanado de video")
 st.write("Sube un video para procesarlo y generar una imagen de salida.")
 
 #Subir archivo de video
