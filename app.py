@@ -71,6 +71,8 @@ if uploaded_video is not None:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp_video:
         temp_video.write(uploaded_video.read())
         temp_video_path = temp_video.name
+        os.remove(temp_video.name)
+
 
     # Procesar el video
     status_placeholder = st.empty() 
