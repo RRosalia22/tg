@@ -3,6 +3,8 @@ import cv2
 from PIL import Image
 import tempfile
 import os
+import numpy as np
+import gc
 
 ##variables globales
 texto_info="Procesando video..."
@@ -23,9 +25,7 @@ def process_video(video_path):
 
 #funcion
 def recuperar_datos(video_path):
-    import cv2
-    import numpy as np
-    import gc
+
 
     # Abre el video
 
