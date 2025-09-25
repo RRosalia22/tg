@@ -1,0 +1,364 @@
+import tkinter as tk
+from tkinter import ttk, filedialog
+import cv2
+from PIL import Image
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import numpy as np
+import os
+
+# ---------------------------
+# Variables globales
+# ---------------------------
+ax = None
+selected_points = []
+point_artists = []
+line_coords = []
+file_path = ""           # ahora string con la ruta del archivo
+video_running = False
+pixels_frame = []
+fig = None
+canvas = None
+
+# ---------------------------
+# Funciones de interacción
+# ---------------------------
+
+def bresenham_line(x0, y0, x1, y1):
+    x0, y0, x1, y1 = int(round(x0)), int(round(y0)), int(round(x1)), int(round(y1))
+    points = []
+    dx = abs(x1 - x0)
+    dy = abs(y1 - y0)
+    x, y = x0, y0
+    sx = 1 if x0 < x1 else -1
+    sy = 1 if y0 < y1 else -1
+
+    if dx > dy:
+        err = dx / 2.0
+        while x != x1:
+            points.append((x, y))
+            err -= dy
+            if err < 0:
+                y += sy
+                err += dx
+            x += sx
+    else:
+        err = dy / 2.0
+        while y != y1:
+            points.append((x, y))
+            err -= dx
+            if err < 0:
+                x += sx
+                err += dy
+            y += sy
+
+    points.append((x1, y1))
+    return points
+
+# Maneja clics sobre la figura (matplotlib)
+def on_click(event):
+    global ax, selected_points, point_artists, canvas
+
+    if event.inaxes:
+        # Si ya tenemos 2 puntos, limpiamos para permitir otra selección
+        if len(selected_points) == 2:
+            selected_points.clear()
+            for artist in point_artists:
+                try:
+                    artist.remove()
+                except Exception:
+                    pass
+            point_artists.clear()
+            # remover líneas previas
+            if ax:
+                for line in list(ax.lines):
+                    try:
+                        line.remove()
+                    except Exception:
+                        pass
+        # Guardar punto y dibujarlo
+        selected_points.append((event.xdata, event.ydata))
+        print(f"Seleccionado: ({event.xdata:.2f}, {event.ydata:.2f})")
+        point = event.inaxes.plot(event.xdata, event.ydata, 'ro')[0]
+        point_artists.append(point)
+        canvas.draw()
+
+# Maneja tecla Enter: si hay 2 puntos, dibuja línea y calcula coordenadas con Bresenham
+def on_enter(event):
+    global ax, selected_points, line_coords, canvas
+    if len(selected_points) >= 2:
+        # tomar los dos últimos puntos
+        x_vals = [selected_points[-2][0], selected_points[-1][0]]
+        y_vals = [selected_points[-2][1], selected_points[-1][1]]
+        # dibujar línea
+        ax.plot(x_vals, y_vals, 'g--')
+        canvas.draw()
+        # calcular coordenadas enteras de la línea
+        line_coords = bresenham_line(x_vals[0], y_vals[0], x_vals[1], y_vals[1])
+        print(f"Dibujando línea entre {selected_points[-2]} y {selected_points[-1]}")
+        print(f"Se definieron {len(line_coords)} coordenadas para el rebanado.")
+
+# Mostrar ejemplo (no usado en flujo principal, útil para pruebas)
+def plot_example():
+    global fig, ax, canvas, selected_points
+    fig.clf()
+    ax = fig.add_subplot(111)
+    x = [1, 2, 3, 4, 5]
+    y = [2, 4, 1, 3, 5]
+    ax.plot(x, y)
+    ax.set_xlabel("X-axis")
+    ax.set_ylabel("Y-axis")
+    ax.set_title("Example Plot")
+    selected_points.clear()
+    canvas.draw()
+
+# ---------------------------
+# Rebanado (reproducción y extracción de linea vs tiempo)
+# ---------------------------
+def rebanado2():
+    global line_coords, video_running, file_path, pixels_frame, fig, canvas, ax
+
+    if not file_path:
+        print("No se ha seleccionado ningún video.")
+        return
+
+    cap = cv2.VideoCapture(file_path)
+    if not cap.isOpened():
+        print("No se pudo abrir el video.")
+        return
+
+    video_running = True
+    pixels_frame = []  # reiniciar lista al comenzar
+
+    def actualizar_frame():
+        nonlocal cap
+        global video_running, pixels_frame, fig, canvas, ax
+
+        if not video_running:
+            cap.release()
+            return
+
+        ret, frame = cap.read()
+        if not ret:
+            print("Fin del video.")
+            cap.release()
+            mostrar_img_final()
+            return
+
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # Mostrar el frame en el canvas
+        fig.clf()
+        ax = fig.add_subplot(111)
+        ax.imshow(frame_rgb)
+        ax.axis('off')
+        ax.set_title("Video")
+        canvas.draw()
+
+        # Extraer valores de los píxeles si hay línea
+        if line_coords:
+            fila_pixeles = []
+            for x, y in line_coords:
+                if 0 <= y < frame_rgb.shape[0] and 0 <= x < frame_rgb.shape[1]:
+                    fila_pixeles.append(frame_rgb[y, x])
+            if fila_pixeles:
+                pixels_frame.append(fila_pixeles)
+        else:
+            # Si no hay línea definida, solo se muestra el video pero no se extrae
+            pass
+
+        # Programar la siguiente llamada (aprox 30ms -> ~33 FPS)
+        canvas.get_tk_widget().after(30, actualizar_frame)
+
+    # iniciar loop de actualización
+    actualizar_frame()
+
+# Mostrar resultado final (imagen línea vs tiempo)
+def mostrar_img_final():
+    global pixels_frame
+    if not pixels_frame:
+        print("No hay datos para mostrar.")
+        return
+
+    resultado = np.array(pixels_frame, dtype=np.uint8)  # (num_frames, num_pixeles, 3)
+
+    # Mostrar en ventana nueva de matplotlib
+    plt.figure("Imagen Línea vs Tiempo")
+    plt.imshow(resultado)
+    #plt.axis('off')
+    plt.title("Concatenación de Píxeles (Línea vs Tiempo)")
+    plt.show()
+
+    # # Guardar imagen
+    # output_path = "linea_vs_tiempo.png"
+    # plt.imsave(output_path, resultado)
+    # print(f"Imagen guardada como '{output_path}'")
+        # Pedir al usuario la ruta de guardado
+    output_path = filedialog.asksaveasfilename(
+        title="Guardar imagen",
+        defaultextension=".png",
+        filetypes=[("PNG files", "*.png"), ("All files", "*.*")]
+    )
+
+    if output_path:  # si el usuario no canceló
+        plt.imsave(output_path, resultado)
+        print(f"Imagen guardada como '{output_path}'")
+    else:
+        print("Guardado cancelado por el usuario.")
+
+# ---------------------------
+# UI: selección de archivo y carga del primer frame
+# ---------------------------
+
+def seleccionar_video():
+    global file_path
+    ruta = filedialog.askopenfilename(
+        title="Seleccionar video",
+        filetypes=[("Archivos de video", "*.mp4 *.avi *.mov *.mkv")]
+    )
+    if ruta:
+        file_path = ruta
+        cargar_primer_frame_y_mostrar_principal()
+
+def cargar_primer_frame_y_mostrar_principal():
+    global file_path, fig, ax, canvas
+    if not file_path:
+        return
+
+    cap = cv2.VideoCapture(file_path)
+    ret, frame = cap.read()
+    cap.release()
+
+    if ret:
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # Mostrar el primer frame en la figura (sin destruir la interfaz de control)
+        fig.clf()
+        ax = fig.add_subplot(111)
+        ax.imshow(frame_rgb)
+        ax.axis('off')
+        ax.set_title("Primer Frame del Video")
+        canvas.draw()
+    else:
+        print("No se pudo leer el primer frame.")
+
+    mostrar_pantalla_principal()  # mostrar controles principales
+
+# ---------------------------
+# Manejo de paneles / "pantallas"
+# ---------------------------
+def limpiar_panel_control():
+    for w in control_panel.winfo_children():
+        w.destroy()
+
+def mostrar_pantalla_inicial():
+    limpiar_panel_control()
+    label = ttk.Label(control_panel, text="Seleccione un video", style="Titulo.TLabel", anchor="center", justify="center")
+    label.pack(pady=30, padx=10)
+    boton = ttk.Button(control_panel, text="Seleccionar archivo", command=seleccionar_video)
+    boton.pack(pady=10, ipadx=10, ipady=5)
+    # Botón opcional: plot example
+    #boton_ej = ttk.Button(control_panel, text="Plot Example (prueba)", command=plot_example)
+    #boton_ej.pack(pady=8, ipadx=6, ipady=4)
+
+def mostrar_pantalla_principal():
+    limpiar_panel_control()
+    instrucciones = ttk.Label(
+        control_panel,
+        text="Ahora haga click en las posiciones inicial y final del recorte.\n"
+             "Para ver la línea del rebanado presione Enter.",
+        style="Texto.TLabel", anchor="center", justify="center", wraplength=control_panel.winfo_width() or 240
+    )
+    instrucciones.pack(pady=10, padx=8)
+
+    # Botones de acción
+    botones_frame = ttk.Frame(control_panel)
+    botones_frame.pack(pady=15)
+
+    boton1 = ttk.Button(botones_frame, text="Seleccionar otro video", command=mostrar_pantalla_inicial)
+    boton1.pack(side=tk.LEFT, padx=10, ipadx=6, ipady=4)
+
+    boton2 = ttk.Button(botones_frame, text="Rebanar (linea vs tiempo)", command=rebanado2)
+    boton2.pack(side=tk.LEFT, padx=10, ipadx=6, ipady=4)
+
+    boton_stop = ttk.Button(control_panel, text="Detener rebanado", command=detener_video)
+    boton_stop.pack(pady=8, ipadx=6, ipady=4)
+
+    boton_result = ttk.Button(control_panel, text="Mostrar resultado actual (si existe)", command=mostrar_img_final)
+    boton_result.pack(pady=8, ipadx=6, ipady=4)
+
+
+def detener_video():
+    global video_running
+    video_running = False
+    print("Se solicitó detener la reproducción del video.")
+    # Mostrar otra vez el primer frame
+    cargar_primer_frame_y_mostrar_principal()
+
+# ---------------------------
+# Construcción de la ventana principal
+# ---------------------------
+root = tk.Tk()
+root.title("Rebanado de video")
+
+# Carpeta donde está este script
+script_dir = os.path.dirname(os.path.abspath(__file__))
+
+# Construir ruta absoluta del icono
+icon_path = os.path.join(script_dir, "icon.png")
+
+# Cargar icono
+icon_img = tk.PhotoImage(file=icon_path)
+root.iconphoto(True, icon_img)
+# Icono para Windows (barra de tareas) — .ico
+icon_path_ico = os.path.join(script_dir, "icono32.ico")
+if os.name == "nt":  # solo en Windows
+    root.iconbitmap(icon_path_ico)
+
+
+# Tamaño relativo al 80% de la pantalla
+w_total = root.winfo_screenwidth()
+h_total = root.winfo_screenheight()
+w = int(w_total * 0.8)
+h = int(h_total * 0.8)
+x = (w_total - w) // 2
+y = (h_total - h) // 2
+root.geometry(f"{w}x{h}+{x}+{y}")
+
+# Estilos
+style = ttk.Style()
+style.configure("Titulo.TLabel", font=("Arial", 16, "bold"))
+style.configure("Texto.TLabel", font=("Arial", 11))
+style.configure("TButton", font=("Arial", 11), padding=6)
+
+# Layout: panel de control a la izquierda, area de visualización a la derecha
+root.columnconfigure(0, weight=0)  # control
+root.columnconfigure(1, weight=1)  # visualización
+root.rowconfigure(0, weight=1)
+
+control_panel = ttk.Frame(root, padding="12", width=280)
+control_panel.grid(row=0, column=0, sticky=(tk.N, tk.S, tk.W))
+control_panel.grid_propagate(False)  # mantener ancho
+
+plot_frame = ttk.Frame(root, padding="6")
+plot_frame.grid(row=0, column=1, sticky=(tk.N, tk.S, tk.E, tk.W))
+plot_frame.columnconfigure(0, weight=1)
+plot_frame.rowconfigure(0, weight=1)
+
+# Figura y canvas (matplotlib embebido)
+fig = plt.Figure(figsize=(6, 4), dpi=100)
+ax = fig.add_subplot(111)
+ax.axis('off')
+canvas = FigureCanvasTkAgg(fig, master=plot_frame)
+canvas_widget = canvas.get_tk_widget()
+canvas_widget.pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+
+# Conectar eventos
+canvas.mpl_connect("button_press_event", on_click)
+root.bind("<Return>", on_enter)
+
+# Iniciar en pantalla inicial
+mostrar_pantalla_inicial()
+
+# Loop principal
+root.mainloop()
